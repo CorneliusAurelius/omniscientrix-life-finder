@@ -13,7 +13,8 @@
   }
   html,body{height:100%;}
   body{margin:0;background:radial-gradient(900px 700px at 70% 20%,var(--bg2),var(--bg));color:var(--ink);
-       font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;display:grid;grid-template-columns:1.15fr 1fr 420px;gap:1px;height:100vh;overflow:hidden;}
+       font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;display:grid;grid-template-columns:1.15fr 1fr 420px;gap:1px;
+height:100vh;overflow:hidden;}
   .panel{background:var(--pane);}
   header{position:fixed;left:14px;top:10px;z-index:2;padding:6px 10px;border-radius:10px;background:rgba(12,18,27,0.6);backdrop-filter:blur(4px);border:1px solid #142235}
   header b{letter-spacing:0.5px}
@@ -26,10 +27,13 @@
   .sub{color:var(--muted);font-size:12px;margin-bottom:12px}
   .card{background:var(--card);border:1px solid #142235;border-radius:14px;padding:12px;margin-bottom:10px}
   .row{display:flex;gap:10px;align-items:center;margin:8px 0}
-  label{flex:0 0 150px;font-size:12px;color:var(--muted)}
+  .row label{flex:0 0 150px;font-size:12px;color:var(--muted)}
   input[type=range]{width:100%}
-  .btn{padding:8px 10px;border-radius:10px;border:1px solid #1a2a3a;background:#0f1b2a;color:#cfe3ff;font-weight:600;cursor:pointer}
+  .btn{padding:8px 10px;border-radius:10px;border:1px solid #1a2a3a;background:#0f1b2a;color:#cfe3ff;font-weight:600;cursor:pointer;white-space:nowrap}
   .btn:hover{background:#122033}
+  .row-toggles{gap:8px;flex-wrap:wrap}
+  .row-actions{gap:8px;flex-wrap:wrap}
+  .status{font-size:11px;color:#8aa2c0;margin-top:6px}
   .kpi{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .kpi .card{text-align:center}
   .kpi .val{font-size:18px;font-weight:800}
@@ -63,17 +67,21 @@
       <div class="row"><label>λ (awareness coupling)</label><input id="lambda" type="range" min="0" max="0.01" step="0.0001" value="0.001"/></div>
       <div class="row"><label>δJ<sub>opt</sub> (optimal)</label><input id="djopt" type="range" min="0.0001" max="0.02" step="0.0001" value="0.001618"/></div>
       <div class="row"><label>Ω<sub>A</sub> (Hz)</label><input id="omegaA" type="range" min="1" max="20" step="0.1" value="7.83"/></div>
-      <div class="row"><label>Bridge Threshold |δJ|</label><input id="bridge" type="range" min="0.0" max="0.5" step="0.005" value="0.05"/></div>
-      <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <div class="row"><label>Bridge Threshold |δJ-δJ<sub>opt</sub>|</label><input id="bridge" type="range" min="0.0" max="0.5" step="0.005" value="0.05"/></div>
+      <div class="row row-toggles">
         <label>Overlays</label>
         <span><input id="tglNivis" type="checkbox" checked> Nivis</span>
         <span><input id="tglGHZ" type="checkbox"> GHZ</span>
         <span><input id="tglEps" type="checkbox" checked> ε-Recurrence</span>
       </div>
-      <div class="row" style="gap:8px;">
-        <button class="btn" id="reset">Reset</button>
+      <div class="row row-actions">
+        <button class="btn" id="reset">Reset View</button>
+        <button class="btn" id="resetData">Restore Data</button>
+        <button class="btn" id="import">Import CSV</button>
         <button class="btn" id="export">Export CSV</button>
       </div>
+      <div class="status" id="datasetStatus">Dataset: Demo sample (loading…)</div>
+      <input type="file" id="csvInput" accept=".csv" hidden>
     </div>
 
     <div class="kpi">
@@ -91,14 +99,103 @@
     </div>
 
     <div class="card legal">
-      <b>Peaceful-Use Doctrine (vΩ_E)</b>: All results are for peaceful scientific exploration and protection of sentient life.  
+      <b>Peaceful-Use Doctrine (vΩ_E)</b>: All results are for peaceful scientific exploration and protection of sentient life.
+
       <b>Attribution</b>: © 2025 Cornelius Aurelius (Samuel Price). Cite Omniscientrix vΩ and LLP in derived works.
     </div>
   </aside>
 
 <script>
+// ===== helpers =====
+const PI = Math.PI;
+
+function extractNumber(value, fallback, min, max){
+  let n = Number(value);
+  if(value === null || value === '' || Number.isNaN(n)) n = fallback;
+  if(min !== undefined) n = Math.max(min, n);
+  if(max !== undefined) n = Math.min(max, n);
+  return n;
+}
+
+function normalizePlanet(row, idx, label='Entry'){
+  const entryLabel = `${label} ${idx+1}`;
+  const clone = {...row};
+  const name = clone.name != null && String(clone.name).trim() !== '' ? String(clone.name).trim() : `Candidate ${idx+1}`;
+  const ra = Number(clone.ra);
+  const dec = Number(clone.dec);
+  if(!Number.isFinite(ra) || !Number.isFinite(dec)){
+    throw new Error(`${entryLabel}: missing or invalid "ra"/"dec" values.`);
+  }
+  const normalized = {
+    ...clone,
+    name,
+    ra,
+    dec,
+    distance_ly: extractNumber(clone.distance_ly, 10, 0.2),
+    radius_re: extractNumber(clone.radius_re, 1, 0.1),
+    star_luminosity_Lsun: extractNumber(clone.star_luminosity_Lsun, 1, 0.01),
+    albedo: extractNumber(clone.albedo, 0.3, 0, 0.99),
+    dkl_atm: extractNumber(clone.dkl_atm, 0.2, 0),
+    a_env_proxy: extractNumber(clone.a_env_proxy, 0.5, 0),
+    R_kpc: extractNumber(clone.R_kpc, 8.0),
+    z_kpc: extractNumber(clone.z_kpc, 0.02)
+  };
+  return normalized;
+}
+
+function splitCSVLine(line){
+  const out=[];
+  let cur='';
+  let inside=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){
+      if(inside && line[i+1]==='"'){ cur+='"'; i++; }
+      else inside=!inside;
+    }else if(ch===',' && !inside){
+      out.push(cur);
+      cur='';
+    }else{
+      cur+=ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function parseCSV(text){
+  const lines = text.split(/\r?\n/).filter(line=>line.trim().length>0);
+  if(lines.length===0) return {headers:[], rows:[]};
+  lines[0] = lines[0].replace(/^\uFEFF/, '');
+  const headers = splitCSVLine(lines[0]).map(h=>h.trim());
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const cells = splitCSVLine(lines[i]);
+    if(cells.every(c=>c.trim()==='')) continue;
+    const row={};
+    headers.forEach((h,idx)=>{
+      const raw = cells[idx] ?? '';
+      const trimmed = raw.trim();
+      row[h] = trimmed === '' ? null : trimmed;
+    });
+    rows.push(row);
+  }
+  return {headers, rows};
+}
+
+function createDefaultData(){
+  return DEFAULT_DATA.map((row, idx)=> normalizePlanet(row, idx, 'Entry'));
+}
+
+function readSliderValue(el, fallback){
+  const num = Number(el.value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
 // ===== Data (embedded) =====
-const DATA = [{"name": "Earth-like", "Teq": "288", "Rp": "1.0", "Mp": "1.0", "feh": "0.0", "water": "0.9", "retention": "0.9", "diseq": "0.8", "flares": "0.2", "mag": "0.7", "Rs": "1.0", "Vmag": "5.0", "ra": 120.0, "dec": 15.0, "dist": "100", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}, {"name": "Flare world", "Teq": "300", "Rp": "1.4", "Mp": "1.2", "feh": "-0.1", "water": "0.6", "retention": "0.6", "diseq": "0.5", "flares": "0.8", "mag": "0.5", "Rs": "0.7", "Vmag": "11.0", "ra": 210.0, "dec": -10.0, "dist": "60", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}, {"name": "Cool mini", "Teq": "240", "Rp": "2.2", "Mp": "6.0", "feh": "0.1", "water": "0.4", "retention": "0.7", "diseq": "0.3", "flares": "0.3", "mag": "0.4", "Rs": "0.9", "Vmag": "9.0", "ra": 45.0, "dec": 30.0, "dist": "150", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}];
+const DEFAULT_DATA = [{"name": "Earth-like", "Teq": "288", "Rp": "1.0", "Mp": "1.0", "feh": "0.0", "water": "0.9", "retention": "0.9", "diseq": "0.8", "flares": "0.2", "mag": "0.7", "Rs": "1.0", "Vmag": "5.0", "ra": 120.0, "dec": 15.0, "dist": "100", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}, {"name": "Flare world", "Teq": "300", "Rp": "1.4", "Mp": "1.2", "feh": "-0.1", "water": "0.6", "retention": "0.6", "diseq": "0.5", "flares": "0.8", "mag": "0.5", "Rs": "0.7", "Vmag": "11.0", "ra": 210.0, "dec": -10.0, "dist": "60", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}, {"name": "Cool mini", "Teq": "240", "Rp": "2.2", "Mp": "6.0", "feh": "0.1", "water": "0.4", "retention": "0.7", "diseq": "0.3", "flares": "0.3", "mag": "0.4", "Rs": "0.9", "Vmag": "9.0", "ra": 45.0, "dec": 30.0, "dist": "150", "distance_ly": 10.0, "radius_re": 1.0, "star_luminosity_Lsun": 1.0, "albedo": 0.3, "dkl_atm": 0.5, "a_env_proxy": 0.6, "R_kpc": 8.0, "z_kpc": 0.02}];
+let DATA = createDefaultData();
+let currentDatasetName = 'Demo sample';
 
 // ===== UI =====
 const elLambda = document.getElementById('lambda');
@@ -106,45 +203,88 @@ const elDjOpt = document.getElementById('djopt');
 const elOmegaA = document.getElementById('omegaA');
 const elBridge = document.getElementById('bridge');
 const elReset = document.getElementById('reset');
+const elResetData = document.getElementById('resetData');
+const elImport = document.getElementById('import');
 const elExport = document.getElementById('export');
 const elDetails = document.getElementById('details');
 const elList = document.getElementById('list');
 const tglNivis = document.getElementById('tglNivis');
 const tglGHZ = document.getElementById('tglGHZ');
 const tglEps = document.getElementById('tglEps');
+const datasetStatus = document.getElementById('datasetStatus');
+const csvInput = document.getElementById('csvInput');
 
 // ===== Canvases =====
 const sky2d = document.getElementById('sky2d'); const cx2 = sky2d.getContext('2d');
 const sky3d = document.getElementById('sky3d'); const cx3 = sky3d.getContext('2d');
+let W2=0,H2=0,W3=0,H3=0;
+let starField2D=[]; let starField3D=[];
 
-let W2,H2,W3,H3;
-function fitCanvases(){
-  const r2 = document.getElementById('map2d').getBoundingClientRect();
-  W2 = sky2d.width = r2.width; H2 = sky2d.height = r2.height;
-  const r3 = document.getElementById('view3d').getBoundingClientRect();
-  W3 = sky3d.width = r3.width; H3 = sky3d.height = r3.height;
+function buildStarfields(){
+  starField2D = Array.from({length:160}, ()=>({
+    x: Math.random()*W2,
+    y: Math.random()*H2,
+    size: Math.random()*1.5+0.4,
+    alpha: 0.2 + Math.random()*0.35,
+    phase: Math.random()*2*PI,
+    speed: 0.5 + Math.random()*0.7
+  }));
+  starField3D = Array.from({length:220}, ()=>({
+    x: Math.random()*W3,
+    y: Math.random()*H3,
+    size: Math.random()*1.2+0.3,
+    alpha: 0.15 + Math.random()*0.4,
+    phase: Math.random()*2*PI,
+    speed: 0.6 + Math.random()*0.9
+  }));
 }
-window.addEventListener('resize', ()=>{fitCanvases(); drawAll();});
+
+function fitCanvases(){
+  const dpr = window.devicePixelRatio || 1;
+  const r2 = document.getElementById('map2d').getBoundingClientRect();
+  W2 = r2.width; H2 = r2.height;
+  sky2d.width = W2*dpr; sky2d.height = H2*dpr;
+  sky2d.style.width = `${W2}px`; sky2d.style.height = `${H2}px`;
+  cx2.setTransform(dpr,0,0,dpr,0,0);
+  const r3 = document.getElementById('view3d').getBoundingClientRect();
+  W3 = r3.width; H3 = r3.height;
+  sky3d.width = W3*dpr; sky3d.height = H3*dpr;
+  sky3d.style.width = `${W3}px`; sky3d.style.height = `${H3}px`;
+  cx3.setTransform(dpr,0,0,dpr,0,0);
+  buildStarfields();
+}
+window.addEventListener('resize', ()=>{ fitCanvases(); drawAll(); });
 
 // ===== Helpers =====
-const PI = Math.PI;
+function updateDatasetStatus(label, count){
+  const plural = count===1 ? '' : 's';
+  datasetStatus.textContent = `Dataset: ${label} (${count} candidate${plural})`;
+}
+
 function AG(R,z){ const R0=8.0,sr=2.0,sz=0.3; return Math.exp(-((R-R0)**2)/(2*sr*sr) - (z*z)/(2*sz*sz)); }
-function S_env(Lsun, albedo, dly){ const L=Lsun||1, a=Math.max(0,Math.min(albedo??0.3,0.99)), d=Math.max(0.1,dly||10); return (L*(1-a))/(4*PI*d*d); }
+function S_env(Lsun, albedo, dly){
+  const L=Math.max(0.01,Lsun||1);
+  const a=Math.max(0,Math.min(albedo??0.3,0.99));
+  const d=Math.max(0.1,dly||10);
+  return (L*(1-a))/(4*PI*d*d);
+}
 function scorePlanet(p){
-  const lam = parseFloat(elLambda.value);
-  const omA = parseFloat(elOmegaA.value);
+  const lam = readSliderValue(elLambda, 0);
+  const omA = Math.max(0.1, readSliderValue(elOmegaA, 7.83));
+  const djOpt = Math.max(0, readSliderValue(elDjOpt, 0.001618));
   const s = S_env(p.star_luminosity_Lsun, p.albedo, p.distance_ly);
   const dkl = Math.max(0, p.dkl_atm);
   const Aenv = Math.max(0, p.a_env_proxy);
-  const deltaJ = Math.abs(s + dkl - lam*Aenv);
-  const Plocal = Math.exp(- deltaJ / (1e-3*omA));
+  const deltaRaw = Math.abs(s + dkl - lam*Aenv);
+  const deltaAdj = Math.abs(deltaRaw - djOpt);
+  const Plocal = Math.exp(- deltaAdj / Math.max(1e-5, 1e-3*omA));
   const ag = AG(p.R_kpc, p.z_kpc);
   const P = Plocal*ag;
-  const eps = Math.exp(- (dkl)/(Math.max(1e-6, lam*Aenv))); // α5 recurrence proxy
-  return {deltaJ, Plocal, ag, P, s, dkl, Aenv, eps};
+  const envCoupling = lam*Aenv;
+  const eps = Math.exp(- dkl / Math.max(1e-6, envCoupling + 1e-6));
+  return {deltaJ: deltaAdj, deltaJRaw: deltaRaw, Plocal, ag, P, s, dkl, Aenv, eps};
 }
 
-// RA/Dec/Dist to 3D Cartesian (approx)
 function toXYZ(raDeg, decDeg, d){
   const ra = raDeg*PI/180, de = decDeg*PI/180;
   const x = d*Math.cos(de)*Math.cos(ra);
@@ -154,30 +294,30 @@ function toXYZ(raDeg, decDeg, d){
 }
 
 // ===== Data build =====
-let planets = DATA.map((p,i)=>{
-  const s = scorePlanet(p);
-  const xyz = toXYZ(p.ra||0, p.dec||0, Math.max(0.2, p.distance_ly||10));
-  return Object.assign({idx:i, xyz}, p, s);
-});
+let planets = [];
 
-// ===== Nivis vectors (approx gradient) =====
+// ===== Nivis vectors =====
 function computeNivis(k=5){
   const pts = planets;
+  if(!pts.length) return;
+  const eps=1e-6;
   for(let i=0;i<pts.length;i++){
     const a = pts[i];
     const neigh = pts.map((b,j)=>{
       if(i===j) return {j, d:1e9};
       const dra = (a.ra - b.ra)*PI/180, ddec = (a.dec - b.dec)*PI/180;
       return {j, d: Math.hypot(dra,ddec)};
-    }).sort((u,v)=>u.d-v.d).slice(0,k);
-    let gx=0, gy=0; const eps=1e-6;
+    }).sort((u,v)=>u.d-v.d).slice(0,Math.min(k, pts.length-1));
+    let gx=0, gy=0;
     for(const nn of neigh){
       const b = pts[nn.j];
-      const ratio = (b.dkl_atm - a.dkl_atm) / (Math.sign(b.a_env_proxy - a.a_env_proxy)*Math.max(Math.abs(b.a_env_proxy - a.a_env_proxy), eps));
-      // direction on 2D sky
-      const x1 = (a.ra/360)*W2, y1 = H2/2 - (a.dec/180)*H2;
-      const x2 = (b.ra/360)*W2, y2 = H2/2 - (b.dec/180)*H2;
-      const vx = (x2 - x1), vy = (y2 - y1);
+      const deltaEnv = b.a_env_proxy - a.a_env_proxy;
+      const denom = Math.abs(deltaEnv) < eps ? (deltaEnv >= 0 ? eps : -eps) : deltaEnv;
+      const ratio = (b.dkl_atm - a.dkl_atm) / denom;
+      if(!Number.isFinite(ratio)) continue;
+      const [x1,y1]=proj2D(a.ra,a.dec);
+      const [x2,y2]=proj2D(b.ra,b.dec);
+      const vx = x2 - x1, vy = y2 - y1;
       const nrm = Math.hypot(vx,vy)||1;
       gx += ratio * (vx/nrm);
       gy += ratio * (vy/nrm);
@@ -203,16 +343,20 @@ function proj2D(ra,dec){
 
 function draw2D(){
   cx2.clearRect(0,0,W2,H2);
-  // backdrop
-  cx2.fillStyle='rgba(255,255,255,0.06)';
-  for(let i=0;i<120;i++){ cx2.fillRect(Math.random()*W2, Math.random()*H2, 1,1);}
-  // GHZ
+  const now = performance.now()/1000;
+  cx2.save();
+  for(const star of starField2D){
+    const twinkle = star.alpha * (0.55 + 0.45*Math.sin(now*star.speed + star.phase));
+    cx2.globalAlpha = twinkle;
+    cx2.fillStyle = '#9bb0c9';
+    cx2.fillRect(star.x, star.y, star.size, star.size);
+  }
+  cx2.restore();
   if(tglGHZ.checked){
     const g = cx2.createLinearGradient(0,0,W2,0);
     g.addColorStop(0,'rgba(0,255,180,0.02)'); g.addColorStop(0.5,'rgba(0,255,180,0.07)'); g.addColorStop(1,'rgba(0,255,180,0.02)');
     cx2.fillStyle=g; cx2.fillRect(0,0,W2,H2);
   }
-  // IAW bridges
   const th = parseFloat(elBridge.value);
   const top = planets.slice().sort((a,b)=>b.P-a.P).slice(0,12);
   cx2.strokeStyle='rgba(210,170,255,0.35)';
@@ -225,8 +369,6 @@ function draw2D(){
       }
     }
   }
-  // nodes
-  const now = performance.now()/1000;
   for(const p of planets){
     const [x,y]=proj2D(p.ra,p.dec);
     const rad = Math.max(2, Math.min(10, (p.radius_re||1)*0.9));
@@ -238,7 +380,6 @@ function draw2D(){
     cx2.beginPath(); cx2.arc(x,y,rad,0,2*Math.PI); cx2.fill();
     p._hit2d = {x,y,rad};
   }
-  // Nivis
   if(tglNivis.checked){
     cx2.strokeStyle='rgba(120,220,255,0.8)'; cx2.lineWidth=1;
     for(const p of planets){
@@ -272,26 +413,35 @@ function proj3D(x,y,z){
 }
 function draw3D(){
   cx3.clearRect(0,0,W3,H3);
-  cx3.fillStyle='rgba(255,255,255,0.05)';
-  for(let i=0;i<140;i++){ cx3.fillRect(Math.random()*W3, Math.random()*H3, 1,1); }
+  const now = performance.now()/1000;
+  cx3.save();
+  for(const star of starField3D){
+    const twinkle = star.alpha * (0.55 + 0.45*Math.sin(now*star.speed + star.phase));
+    cx3.globalAlpha = twinkle;
+    cx3.fillStyle = '#7fc8ff';
+    cx3.beginPath();
+    cx3.arc(star.x, star.y, star.size, 0, 2*PI);
+    cx3.fill();
+  }
+  cx3.restore();
   const th = parseFloat(elBridge.value);
-  const sorted = planets.slice().map(p=>{
+  const sorted = planets.map(p=>{
     const r = rotate(p.xyz.x, p.xyz.y, p.xyz.z);
     const [px,py,zc] = proj3D(r.x, r.y, r.z);
     return Object.assign({}, p, {scr:{x:px,y:py,z:zc}});
   }).sort((a,b)=> b.scr.z - a.scr.z);
+  const indexToScreen = new Map(sorted.map(p=>[p.idx,p]));
   const top = planets.slice().sort((a,b)=>b.P-a.P).slice(0,12);
   cx3.strokeStyle='rgba(210,170,255,0.25)';
   for(let i=0;i<top.length;i++){
     for(let j=i+1;j<top.length;j++){
       if(Math.abs(top[i].deltaJ)<th && Math.abs(top[j].deltaJ)<th){
-        const ai = sorted.find(s=>s.idx===top[i].idx);
-        const bj = sorted.find(s=>s.idx===top[j].idx);
+        const ai = indexToScreen.get(top[i].idx);
+        const bj = indexToScreen.get(top[j].idx);
         if(ai && bj){ cx3.beginPath(); cx3.moveTo(ai.scr.x, ai.scr.y); cx3.lineTo(bj.scr.x, bj.scr.y); cx3.stroke(); }
       }
     }
   }
-  const now = performance.now()/1000;
   for(const p of sorted){
     const rad = Math.max(2, Math.min(10, (p.radius_re||1)*0.9));
     const glow = tglEps.checked ? (0.6 + 0.4*Math.sin(now*2*Math.sqrt(p.eps+0.001))) : 1.0;
@@ -337,7 +487,7 @@ function showDetails(p){
   RA=${(p.ra||0).toFixed(3)}°, Dec=${(p.dec||0).toFixed(3)}°, Dist=${(p.distance_ly||0).toFixed(2)} ly<br>
   R<sub>p</sub>=${(p.radius_re||1).toFixed(2)} R<sub>⊕</sub>, L<sub>*</sub>=${(p.star_luminosity_Lsun||1).toFixed(3)} L<sub>☉</sub>, a=${(p.albedo||0.3).toFixed(2)}<br>
   D<sub>KL</sub>=${p.dkl_atm.toFixed(3)}, A<sub>env</sub>=${p.a_env_proxy.toFixed(3)}, A<sub>G</sub>=${p.ag.toFixed(3)}<br>
-  δJ=${p.deltaJ.toFixed(5)}, ε=${p.eps.toFixed(4)}, P<sub>life</sub>=${p.P.toFixed(4)}`;
+  |δJ-δJ<sub>opt</sub>|=${p.deltaJ.toFixed(5)}, δJ<sub>raw</sub>=${p.deltaJRaw.toFixed(5)}, ε=${p.eps.toFixed(4)}, P<sub>life</sub>=${p.P.toFixed(4)}`;
 }
 
 // ===== recompute & rank =====
@@ -350,6 +500,7 @@ function recompute(){
   computeNivis();
   rankList();
   drawAll();
+  updateDatasetStatus(currentDatasetName, DATA.length);
 }
 [elLambda, elDjOpt, elOmegaA, elBridge, tglNivis, tglGHZ, tglEps].forEach(el=> el.addEventListener('input',recompute));
 elReset.addEventListener('click', ()=>{ zoom2=1; pan2x=pan2y=0; rotX=0.2; rotY=0.8; zoom3=1; recompute(); });
@@ -357,12 +508,12 @@ elReset.addEventListener('click', ()=>{ zoom2=1; pan2x=pan2y=0; rotX=0.2; rotY=0
 function rankList(){
   const arr = planets.slice().sort((a,b)=> b.P - a.P);
   const top = arr.length?arr[0].P:0, avg = arr.length?arr.reduce((s,x)=>s+x.P,0)/arr.length:0;
-  document.getElementById('kpiTop').textContent = top.toFixed(3);
-  document.getElementById('kpiAvg').textContent = avg.toFixed(3);
+  document.getElementById('kpiTop').textContent = arr.length?top.toFixed(3):'—';
+  document.getElementById('kpiAvg').textContent = arr.length?avg.toFixed(3):'—';
   elList.innerHTML='';
   arr.forEach((p,i)=>{
     const d = document.createElement('div'); d.className='item';
-    d.innerHTML = `<b>#${i+1}</b> — ${p.name||'Unnamed'}<div style="font-size:12px;color:#9fb;">P<sub>life</sub>=${p.P.toFixed(3)} • δJ=${p.deltaJ.toFixed(4)} • D<sub>KL</sub>=${p.dkl_atm.toFixed(3)}</div>`;
+    d.innerHTML = `<b>#${i+1}</b> — ${p.name||'Unnamed'}<div style="font-size:12px;color:#9fb;">P<sub>life</sub>=${p.P.toFixed(3)} • |δJ-δJ<sub>opt</sub>|=${p.deltaJ.toFixed(4)} • δJ<sub>raw</sub>=${p.deltaJRaw.toFixed(4)}</div>`;
     d.onclick = ()=> showDetails(p);
     elList.appendChild(d);
   });
@@ -370,26 +521,62 @@ function rankList(){
 
 // ===== Export =====
 elExport.onclick = ()=>{
-  const header = 'name,ra,dec,distance_ly,radius_re,star_luminosity_Lsun,albedo,dkl_atm,a_env_proxy,R_kpc,z_kpc,deltaJ,epsilon,Plocal,AG,Ptotal';
+  const header = 'name,ra,dec,distance_ly,radius_re,star_luminosity_Lsun,albedo,dkl_atm,a_env_proxy,R_kpc,z_kpc,deltaJ_raw,deltaJ,epsilon,Plocal,AG,Ptotal';
   const lines = [header];
   planets.forEach(p=>{
-    const arr = [p.name, p.ra, p.dec, p.distance_ly, p.radius_re, p.star_luminosity_Lsun, p.albedo, p.dkl_atm, p.a_env_proxy, p.R_kpc, p.z_kpc, p.deltaJ, p.eps, p.Plocal, p.ag, p.P];
+    const arr = [p.name, p.ra, p.dec, p.distance_ly, p.radius_re, p.star_luminosity_Lsun, p.albedo, p.dkl_atm, p.a_env_proxy, p.R_kpc, p.z_kpc, p.deltaJRaw, p.deltaJ, p.eps, p.Plocal, p.ag, p.P];
     lines.push(arr.join(','));
   });
-  const blob = new Blob([lines.join('\\n')], {type:'text/csv'});
+  const blob = new Blob([lines.join('\n')], {type:'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download='omniscientrix_life_scores_3d.csv';
   a.click();
 };
 
+// ===== Import =====
+elImport.addEventListener('click', ()=> csvInput.click());
+csvInput.addEventListener('change', ev=>{
+  const file = ev.target.files && ev.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const text = String(e.target.result||'');
+      const {headers, rows} = parseCSV(text);
+      if(!rows.length) throw new Error('No rows detected in CSV.');
+      if(!headers.includes('ra') || !headers.includes('dec')){
+        throw new Error('CSV must include "ra" and "dec" columns (degrees).');
+      }
+      const parsed = rows.map((row, idx)=> normalizePlanet(row, idx, 'Row'));
+      DATA = parsed;
+      currentDatasetName = file.name;
+      recompute();
+      elDetails.innerHTML = `<b>Imported ${DATA.length} candidates</b><br>Now ranking using Omniscientrix parameters.`;
+    }catch(err){
+      console.error(err);
+      elDetails.innerHTML = `<b>Import error:</b> ${err.message}`;
+    }
+  };
+  reader.onerror = ()=>{
+    elDetails.innerHTML = '<b>Import error:</b> Unable to read file.';
+  };
+  reader.readAsText(file);
+  ev.target.value = '';
+});
+
+elResetData.addEventListener('click', ()=>{
+  DATA = createDefaultData();
+  currentDatasetName = 'Demo sample';
+  recompute();
+  elDetails.innerHTML = '<b>Restored demo dataset</b><br>Ready for exploration.';
+});
+
 // ===== draw =====
 function drawAll(){ draw2D(); draw3D(); }
+
 fitCanvases();
-computeNivis();
-rankList();
-drawAll();
-// animate ε pulsing
+recompute();
 function loop(){ drawAll(); requestAnimationFrame(loop); }
 requestAnimationFrame(loop);
 </script>
