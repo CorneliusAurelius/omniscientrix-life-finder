@@ -6,9 +6,10 @@ A single-file, offline-ready visual app that ranks exoplanets for life likelihoo
 - **Life score**: \(P_{life} \propto \exp[-|S_{env}/\hbar + D_{KL}^{atm} - \lambda A_{env}|/(\hbar \Omega_A)] \times A_G(R,z)\)
 - **D_KL** atmospheric disequilibrium, **A_env** climate stability proxy, **A_G** Galactic Habitable Zone weight
 - **Nivis vectors** \(\nabla_A D_{KL}\) overlay
-- **IAW bridges** where |\(\delta J\)| dips below threshold
+- **IAW bridges** where |\(\delta J-\delta J_{opt}|\) dips below threshold
 - **3D** interactive view (no external libs), **GHZ** overlay, **ε** recurrence pulsing
-- Export ranked CSV
+- Import custom candidate CSVs and export the current rankings
+- Persistent twinkling starfields and retina-ready canvases for crisp visuals
 
 ## Run locally
 Just open `index.html` in a modern browser (Chrome/Edge/Brave). No server required.
@@ -20,9 +21,14 @@ Just open `index.html` in a modern browser (Chrome/Edge/Brave). No server requir
 4. After a minute, your app is live at: `https://<your-username>.github.io/omniscientrix-life-finder/`
 
 ## Data
-The app embeds a small demo dataset. To use your own, edit the `DATA` JSON in `index.html` or adjust the code to load a CSV via `<input type="file">` (optional enhancement).
+The app embeds a small demo dataset and now supports CSV import/export directly from the UI.
 
-**Data fields**: `name, ra, dec, distance_ly, radius_re, star_luminosity_Lsun, albedo, dkl_atm, a_env_proxy, R_kpc, z_kpc`.
+### Custom data import
+1. Click **Import CSV** in the control panel.
+2. Provide a CSV with a header row that includes at least `ra` and `dec` (degrees). Optional fields such as `distance_ly`, `radius_re`, `star_luminosity_Lsun`, `albedo`, `dkl_atm`, `a_env_proxy`, `R_kpc`, and `z_kpc` will be auto-coerced when present.
+3. The status chip shows the active dataset and candidate count. Use **Restore Data** to revert to the bundled demo set at any time.
+
+Exports include the current scores plus derived metrics (`deltaJ_raw`, `deltaJ`, `epsilon`, `Plocal`, `AG`, `Ptotal`).
 
 ## Attribution & Ethics
 - © 2025 Cornelius Aurelius (Samuel Price). All rights reserved.
